@@ -1,8 +1,7 @@
 import datetime
-from datetime import timezone
+import itertools
 import logging
 import os
-from os import POSIX_FADV_NOREUSE
 import re
 import sqlite3
 import sys
@@ -48,6 +47,10 @@ this.html_slug = """
                 <h2 class="subtitle">
                     ##RUNDATE##
                 </h2>
+                <h3>Tolerance: ##TOLERANCE##</h3>
+                <h3>Consecutive Run b-ion: ##BRUN##</h3>
+                <h3>OR</h3>
+                <h3>Consecutive Run y-ion: ##YRUN##</h3>
                 </div>
             </div>
     </section>
@@ -183,7 +186,7 @@ def _generate_ion_plot(peptide, psm_values, fragment_mz, matched_mz):
         b=10,
         t=50,
         pad=4
-    ), height=500, width=800)
+    ), height=800, width=1200)
 
     fig = go.Figure(layout=layout)
 
@@ -192,7 +195,6 @@ def _generate_ion_plot(peptide, psm_values, fragment_mz, matched_mz):
     for ion_type in fragment_mz.keys():
         data_y = [max_psm_intensity, ] * len(fragment_mz[ion_type])
         data_x = fragment_mz[ion_type]
-        #data_x.sort()
         frag_colors = []
         bar_width = []
         hover_text = []
@@ -203,7 +205,8 @@ def _generate_ion_plot(peptide, psm_values, fragment_mz, matched_mz):
                 frag_colors.append(colors[ion_type].replace("#OP#", "1"))
                 bar_width.append(1)
                 hover_text.append('Fragment Match')
-                truncated_data.append(data_x[idx])
+                if data_x[idx] not in truncated_data:
+                    truncated_data.append(data_x[idx])
             else:
                 #Do not draw fragments with no match
                 pass
@@ -220,11 +223,13 @@ def _generate_ion_plot(peptide, psm_values, fragment_mz, matched_mz):
     fig.add_trace(psm_trace)
 
     if this.plotly_touched:
+        #return plotly.io.to_html(fig, full_html=False, include_plotlyjs=False, config={'displayModeBar': False})
         return plotly.io.to_html(fig, full_html=False, include_plotlyjs=False)
     else:
         this.plotly_touched = True
+        #return plotly.io.to_html(fig, full_html=False, config={'displayModeBar': False})
         return plotly.io.to_html(fig, full_html=False)
-
+    
 
 def _match_mzs(scan, fragment, delta=0.5):
     """
@@ -241,12 +246,17 @@ def _match_mzs(scan, fragment, delta=0.5):
         - matched mz: list of matching mz values
     """
     matched_mz = []
+    consecutive_run =  [0 for x in fragment]
+
     for s in scan:
-        for f in fragment:
-            diff = abs(s - f)
+        for idx in range(0, len(fragment)):
+            diff = abs(s - fragment[idx])
             if (diff <= delta):
-                matched_mz.append(f)
-    return matched_mz
+                consecutive_run[idx] = 1
+                if fragment[idx] not in matched_mz:
+                    matched_mz.append(fragment[idx])
+    ion_match_runs = list(len(list(y)) for (c,y) in itertools.groupby(consecutive_run) if c==1)
+    return {"peaks": matched_mz, "ion_run": ion_match_runs}
 
 
 def _q_quote(str):
@@ -293,7 +303,7 @@ def _psm(db, pep_seq):
     logger.info(f"Query for PSM objects based on sequence {pep_seq}")
     conn = sqlite3.connect(db)
     cursor = conn.cursor()
-    sql_q = f"SELECT id, passThreshold, spectrumID, spectrumTitle, \"PeptideShaker PSM score\", \"PeptideShaker PSM confidence\",  passThreshold FROM psm_entries WHERE sequence = {_q_quote(pep_seq)}"
+    sql_q = f"SELECT id, passThreshold, spectrumID, spectrumTitle, \"PeptideShaker PSM score\", \"PeptideShaker PSM confidence\",  passThreshold FROM psm_entries WHERE sequence = {_q_quote(pep_seq)} AND passThreshold = 'true'"
     psms = cursor.execute(sql_q).fetchall()
     r_val = []
     for psm in psms:
@@ -368,7 +378,7 @@ def _create_table(sequence, matchedpeaks, ionfragments, maxcharge, encodedsequen
     b_keys = list(filter(lambda key: b_re.match(key), ionfragments.keys()))
     y_keys = list(filter(lambda key: y_re.match(key), ionfragments.keys()))
 
-    r_val = "<table class='table is-narrow'><thead><tr>"
+    r_val = "<table class='table'><thead><tr>"
 
     for k in b_keys:
         r_val += f"<th class='has-text-centered'>{k}</th>"
@@ -439,7 +449,21 @@ def _write_psm_details(psm):
     return r_val
 
 
-def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-H2O', 'y-NH3', 'M'), epsilon=0.5, maxcharge=1):
+def _filter_ion_runs_fail(matches, br, yr):
+    b_run = filter(lambda p: p >= br, matches['b']['ion_run'])
+    y_run = filter(lambda p: p >= yr, matches['y']['ion_run'])
+    ret_value = True
+
+    if len(list(b_run)) > 0:
+        ret_value = False
+    if len(list(y_run)) > 0:
+        ret_value = False
+
+    return ret_value
+
+
+def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-H2O', 'y-NH3', 'M'), 
+                epsilon=0.5, maxcharge=1, b_run=3, y_run=3):
     # region
     """
     Scores PSMs found on mzsqlite db by comparing observed mz peaks against 
@@ -471,8 +495,10 @@ def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-
     found_peptides = _peptides(db_path, target_sequences)
 
     html_code = this.html_slug
-    #get all psm entries for each target sequence and work with each set of psms
-    for pep_seq in found_peptides.keys():
+    #get all psm entries for each target sequence and work with each set of psms, alpha order for seqeunces
+    alpha_keys = list(found_peptides.keys())
+    alpha_keys.sort()
+    for pep_seq in alpha_keys:
         pep_html = f"<div id='{pep_seq}' class='card has-text-centered has-background-grey-light py-4'><h1>{pep_seq}</h1></div>##PSM##"
         encoded_sequence = None
 
@@ -483,7 +509,8 @@ def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-
         
         target_psms = _psm(db_path, pep_seq)
         for tp in target_psms:
-            pep_html = pep_html.replace("##PSM##", _write_psm_details(tp))
+            psm_details = _write_psm_details(tp)
+            #pep_html = pep_html.replace("##PSM##", _write_psm_details(tp))
             scan = _scans(db_path, tp['spectrumID'])
             if (len(scan['mzValues']) > 0):
                 matched_peaks = dict()
@@ -492,17 +519,23 @@ def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-
                     frags[ion_type] = _fragment_ions(pep_seq, itype=ion_type, encodedsequence=encoded_sequence)
                     matched_peaks[ion_type] = _match_mzs(_to_float(scan['mzValues']), frags[ion_type], delta=epsilon)
                 
-                plot_html = _generate_ion_plot(
-                    pep_seq, 
-                    {"mzvalues": _to_float(scan['mzValues']), "intensity": _to_float(scan["intensities"])},
-                    frags, matched_peaks)
+                # Filter here based on user set matched run parms
+                if _filter_ion_runs_fail(matched_peaks, b_run, y_run):
+                    logger.info(f"No consecutive ion run for {pep_seq}")
+                else:
+                    pep_html = pep_html.replace("##PSM##", psm_details)
+                    for k in matched_peaks.keys():
+                        matched_peaks[k] = matched_peaks[k]["peaks"]
+                    plot_html = _generate_ion_plot(
+                        pep_seq, 
+                        {"mzvalues": _to_float(scan['mzValues']), "intensity": _to_float(scan["intensities"])},
+                        frags, matched_peaks)
 
-                pep_html = pep_html.replace("##PSM##", f"<div class='columns'><div class='column'>{pep_seq}_{tp['spectrumID']}_{tp['spectrumTitle']}.svg</div><div class='column'><p>##FS##</p></div></div>##PSM##")
-                frag_table = _create_table(pep_seq, matched_peaks, frags, maxcharge, encodedsequence=encoded_sequence)
-                pep_html = pep_html.replace("##FS##", frag_table)
-                pep_html = pep_html.replace(f"{pep_seq}_{tp['spectrumID']}_{tp['spectrumTitle']}.svg", plot_html)
-            else:
-                pep_html = pep_html.replace("##PSM##", "<div class='notification has-background-danger-light'><p>No scan mz/intensity values are available for this PSM</p></div>##PSM##")
+                    pep_html = pep_html.replace("##PSM##", f"<div class='columns is-centered'><div class='column is-narrow'>{pep_seq}_{tp['spectrumID']}_{tp['spectrumTitle']}.svg</div></div><div class='columns is-centered'><div class='column is-narrow'><p>##FS##</p></div></div>##PSM##")
+                    frag_table = _create_table(pep_seq, matched_peaks, frags, maxcharge, encodedsequence=encoded_sequence)
+                    pep_html = pep_html.replace("##FS##", frag_table)
+                    pep_html = pep_html.replace(f"{pep_seq}_{tp['spectrumID']}_{tp['spectrumTitle']}.svg", plot_html)
+        
         #Populate report
         pep_html += """##PEPTIDE##"""
         html_code = html_code.replace("##PEPTIDE##", pep_html)
@@ -511,6 +544,9 @@ def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-
     html_code = html_code.replace("##PEPTIDE##", "")
     html_code = html_code.replace("##PSM##", "")
     html_code = html_code.replace("##RUNDATE##", str(datetime.datetime.now()))
+    html_code = html_code.replace("##TOLERANCE##", str(epsilon))
+    html_code = html_code.replace("##BRUN##", str(b_run))
+    html_code = html_code.replace("##YRUN##", str(y_run))
     write_report(html_code)
 
 if __name__ == "__main__":

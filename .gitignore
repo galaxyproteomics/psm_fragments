@@ -4,3 +4,5 @@ LargeDataSet.mz.sqlite
 *.png
 *.svg
 *.html
+psmfragmentation/__pycache__/*
+*.egg-info

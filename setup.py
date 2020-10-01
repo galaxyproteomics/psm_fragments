@@ -11,7 +11,7 @@ setuptools.setup(
     name="psm_fragments",
     version=f"{_pkg_version}",
     packages=["psmfragmentation"],
-    install_requires=["pyteomics", "plotly"],
+    install_requires=["numpy", "lxml", "pyteomics", "plotly"],
     description="Score PSMs with fragmentation quality check",
     author=f"{_author}",
     author_email=f"{_author_email}",
