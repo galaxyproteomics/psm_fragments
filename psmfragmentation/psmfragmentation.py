@@ -180,13 +180,16 @@ def _generate_ion_plot(peptide, psm_values, fragment_mz, matched_mz):
     colors = {'y': "rgba(255,0,0,#OP#)", 'y-H2O': 'rgb(204, 0, 0,#OP#)', 'y-NH3': 'rgb(210, 85, 85,#OP#)',
         'b': 'rgba(0,0,255,#OP#)', 'b-H2O': 'rgb(102, 127, 153,#OP#)', 'b-NH3': 'rgb(69, 86, 104,#OP#)', 'M': 'rgb(0, 255, 0, #OP#)'}
     
-    layout =  go.Layout(xaxis=({'title':'MZ Values'}), title=peptide, margin=dict(
+    layout =  go.Layout(
+        xaxis=({'title':'MZ Values', 'linecolor': 'black'}), 
+        yaxis=({'gridcolor': '#eef6fc', 'linecolor': 'black'}),
+        title=peptide, margin=dict(
         l=10,
         r=10,
         b=10,
         t=50,
         pad=4
-    ), height=800, width=1200)
+    ), height=800, width=1200, plot_bgcolor='#fcfcfc')
 
     fig = go.Figure(layout=layout)
 
