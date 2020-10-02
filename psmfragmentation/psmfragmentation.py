@@ -136,12 +136,13 @@ class TabularResults(object):
             num_b = len(entry['ion_fragments']['b'])
             num_y = len(entry['ion_fragments']['y'])
 
-            self._results[psmid]['pct_b_peaks_matched'] = (num_match_b/num_b) * 100.0
-            self._results[psmid]['pct_y_peaks_matched'] = (num_match_y/num_y) * 100.0
+            self._results[psmid]['pct_b_peaks_matched'] = round((num_match_b/num_b) * 100.0, 2)
+            self._results[psmid]['pct_y_peaks_matched'] = round((num_match_y/num_y) * 100.0, 2)
 
-    def add_psm(self, psm):
+    def add_psm(self, psm, scan_file_name):
         obj = {k:v for k,v in psm.items()}
         self._results[psm['ID']] = obj
+        self._results[psm['ID']]['scanFile'] = scan_file_name
 
     def add_ionruns(self, psm_id, matches):
         self._results[psm_id]['matched_peaks'] = matches
@@ -157,9 +158,9 @@ class TabularResults(object):
     def generate_output(self):
         self._fragment_percent()
         self._unmatched_peaks()
-        r_keys = ('spectrumID', 'spectrumTitle', 'PSPSMScore', 'PSPSMConfidence','TIC','max_b_run','max_y_run','pct_b_peaks_matched', 'pct_y_peaks_matched','num_peaks_unmatched_10pct')
+        r_keys = ('spectrumID', 'spectrumTitle', 'scanFile','PSPSMScore', 'PSPSMConfidence','TIC','max_b_run','max_y_run','pct_b_peaks_matched', 'pct_y_peaks_matched','num_peaks_unmatched_10pct')
         with open('results.txt', 'w') as f:
-            f.write(f"spectrumID,spectrumTitle,PSScore,PSConfidence,TIC,Max_B_Run, Max_Y_Run,PCT_B_Matched, PCT_Y_Matched,Num_10Pct_Peaks_Unmatched")
+            f.write(f"spectrumID,spectrumTitle,scanFile,PSScore,PSConfidence,TIC,Max_B_Run, Max_Y_Run,PCT_B_Matched, PCT_Y_Matched,Num_10Pct_Peaks_Unmatched")
             f.write(os.linesep)
             for _, entry in self._results.items():
                 line = ''
@@ -429,8 +430,10 @@ def _scans(db, spectrumID):
     s = dict()
     s.setdefault("spectrumID", scan[0])
     s.setdefault("spectrumTitle", scan[1])
+    s.setdefault("scanFile", scan[2])
     s.setdefault("mzValues", scan[4])
     s.setdefault("intensities", scan[5])
+
     return s
 
 
@@ -615,7 +618,7 @@ def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-
                     logger.info(f"No consecutive ion run for {pep_seq}")
                 else:
                     #add psm to tabular results
-                    tabular_results.add_psm(tp)
+                    tabular_results.add_psm(tp, scan['scanFile'])
                     tabular_results.add_ionruns(tp['ID'], matched_peaks)
                     tabular_results.add_scan(tp['ID'], {'mz': _to_float(scan['mzValues']), 'intensity': _to_float(scan["intensities"])})
                     tabular_results.add_frags(tp['ID'], frags)
