@@ -6,3 +6,4 @@ LargeDataSet.mz.sqlite
 *.html
 psmfragmentation/__pycache__/*
 *.egg-info
+results.tab

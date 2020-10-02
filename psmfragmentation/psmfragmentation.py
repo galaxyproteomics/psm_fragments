@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 
 from pyteomics import mass
 
+
 logger = logging.getLogger(__name__)
 logger.setLevel(level=os.environ.get("LOGLEVEL", "INFO"))
 handler = logging.StreamHandler()
@@ -84,6 +85,91 @@ this.html_slug = """
 #Pyteomics config for modifications
 this.unimod_db = mass.Unimod()
 this.custom_aa_comp = dict(mass.std_aa_comp)
+
+class TabularResults(object):
+    # region
+    """
+    Class for creating tabular output of PSM validation.
+
+    Result Line
+    ===========
+    - Scan number
+    - Scan file
+    - Max continuous B-ions
+    - Max continuous Y-ions
+    - Percent of fragment peaks matched
+    - Number of PSM peaks >= 10% of maximum intensity unmatched to fragments
+    - TIC
+    - Precursor mz
+    - Retention time
+    - Something else that is incomprehensible to me
+
+    """
+    # endregion
+    def __init__(self, obj):
+        """
+        Hold each line of results in _results. Each psm will be a dict with _keys and correct values
+        """
+        super(TabularResults, self).__init__()
+        self._results = {}
+        self._tolerance = obj['tolerance']
+        self._keys = ('scan_number', 'scan_file', 'max_cont_b', 'max_cont_y', 'pct_pks_matched',
+            'num_peaks_unmatched_10pct', 'tic', 'precursor_mz', 'retention_time')
+    
+    def _unmatched_peaks(self):
+        for _, entry in self._results.items():
+            max_int_threshold = max(entry['scan']['intensity'], default=0) * .10
+            threshold_peaks = []
+            matched_threshold_peaks = set()
+            for idx in range(0, len(entry['scan']['mz'])):
+                if entry['scan']['intensity'][idx] >= max_int_threshold:
+                    threshold_peaks.append(entry['scan']['mz'][idx])
+            for itype in ('b', 'y'):
+                for mp in entry['matched_peaks'][itype]:
+                    matched_threshold_peaks.update(list(filter(lambda peak: abs(peak - mp) < self._tolerance, threshold_peaks)))
+            entry['num_peaks_unmatched_10pct'] = len(threshold_peaks) - len(matched_threshold_peaks)
+    
+    def _fragment_percent(self):
+        for psmid, entry in self._results.items():
+            num_match_b = len(entry['matched_peaks']['b'])
+            num_match_y = len(entry['matched_peaks']['y'])
+            num_b = len(entry['ion_fragments']['b'])
+            num_y = len(entry['ion_fragments']['y'])
+
+            self._results[psmid]['pct_b_peaks_matched'] = (num_match_b/num_b) * 100.0
+            self._results[psmid]['pct_y_peaks_matched'] = (num_match_y/num_y) * 100.0
+
+    def add_psm(self, psm):
+        obj = {k:v for k,v in psm.items()}
+        self._results[psm['ID']] = obj
+
+    def add_ionruns(self, psm_id, matches):
+        self._results[psm_id]['matched_peaks'] = matches
+        self._results[psm_id]['max_b_run'] = max(matches['b']['ion_run'], default=0)
+        self._results[psm_id]['max_y_run'] = max(matches['y']['ion_run'], default=0)
+
+    def add_scan(self, psm_id, scan):
+        self._results[psm_id]['scan'] = scan
+
+    def add_frags(self, psm_id, fragments):
+        self._results[psm_id]['ion_fragments'] = fragments
+
+    def generate_output(self):
+        self._fragment_percent()
+        self._unmatched_peaks()
+        r_keys = ('spectrumID', 'spectrumTitle', 'PSPSMScore', 'PSPSMConfidence','TIC','max_b_run','max_y_run','pct_b_peaks_matched', 'pct_y_peaks_matched','num_peaks_unmatched_10pct')
+        with open('results.txt', 'w') as f:
+            f.write(f"spectrumID,spectrumTitle,PSScore,PSConfidence,TIC,Max_B_Run, Max_Y_Run,PCT_B_Matched, PCT_Y_Matched,Num_10Pct_Peaks_Unmatched")
+            f.write(os.linesep)
+            for _, entry in self._results.items():
+                line = ''
+                for k in r_keys:
+                    line += f"{entry[k]},"
+                line = line[:-1]
+                f.write(line)
+                f.write(os.linesep)
+                
+
 
 def _to_unimod(sequence):
     """
@@ -306,7 +392,7 @@ def _psm(db, pep_seq):
     logger.info(f"Query for PSM objects based on sequence {pep_seq}")
     conn = sqlite3.connect(db)
     cursor = conn.cursor()
-    sql_q = f"SELECT id, passThreshold, spectrumID, spectrumTitle, \"PeptideShaker PSM score\", \"PeptideShaker PSM confidence\",  passThreshold FROM psm_entries WHERE sequence = {_q_quote(pep_seq)} AND passThreshold = 'true'"
+    sql_q = f"SELECT id, passThreshold, spectrumID, spectrumTitle, \"PeptideShaker PSM score\", \"PeptideShaker PSM confidence\",  passThreshold, tic FROM psm_entries WHERE sequence = {_q_quote(pep_seq)} AND passThreshold = 'true'"
     psms = cursor.execute(sql_q).fetchall()
     r_val = []
     for psm in psms:
@@ -318,6 +404,7 @@ def _psm(db, pep_seq):
         o.setdefault("PSPSMScore", psm[4])
         o.setdefault("PSPSMConfidence", psm[5])
         o.setdefault("PassThreshold", psm[6])
+        o.setdefault("TIC", psm[7])
         r_val.append(o)
     return r_val
 
@@ -489,6 +576,7 @@ def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-
     """
     # endregion
         
+    tabular_results = TabularResults({'tolerance': epsilon})
     #Read sequence file for target sequences
     target_sequences = []
     with open(sequence_file, "r") as f:
@@ -526,6 +614,11 @@ def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-
                 if _filter_ion_runs_fail(matched_peaks, b_run, y_run):
                     logger.info(f"No consecutive ion run for {pep_seq}")
                 else:
+                    #add psm to tabular results
+                    tabular_results.add_psm(tp)
+                    tabular_results.add_ionruns(tp['ID'], matched_peaks)
+                    tabular_results.add_scan(tp['ID'], {'mz': _to_float(scan['mzValues']), 'intensity': _to_float(scan["intensities"])})
+                    tabular_results.add_frags(tp['ID'], frags)
                     pep_html = pep_html.replace("##PSM##", psm_details)
                     for k in matched_peaks.keys():
                         matched_peaks[k] = matched_peaks[k]["peaks"]
@@ -551,6 +644,7 @@ def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-
     html_code = html_code.replace("##BRUN##", str(b_run))
     html_code = html_code.replace("##YRUN##", str(y_run))
     write_report(html_code)
+    tabular_results.generate_output()
 
 if __name__ == "__main__":
     score_psms(sys.argv[1], sys.argv[2])
