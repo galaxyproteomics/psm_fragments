@@ -297,6 +297,11 @@ def _generate_ion_plot(peptide, psm_values, fragment_mz, matched_mz):
                 hover_text.append('Fragment Match')
                 if data_x[idx] not in truncated_data:
                     truncated_data.append(data_x[idx])
+                    fig.add_annotation(
+                        x=data_x[idx],
+                        y=data_y[0] + (max_psm_intensity * .10),
+                        text=str(round(data_x[idx], 4))
+                        )
             else:
                 #Do not draw fragments with no match
                 pass
@@ -304,14 +309,22 @@ def _generate_ion_plot(peptide, psm_values, fragment_mz, matched_mz):
         ion_name = ion_type + ' Ion'
         if ion_type == 'M':
             ion_name = "Internals"
-        i_trace = go.Bar(x=truncated_data, y=data_y, marker_color=frag_colors, name=ion_name, hovertext=hover_text, width=bar_width)
+        i_trace = go.Bar(x=truncated_data, y=data_y, marker_color=frag_colors, name=ion_name, hovertemplate='MZ: %{x:.3f}<extra></extra>', width=bar_width)
         fig.add_trace(i_trace)
 
     psm_color = ['black'] * len(psm_values['mzvalues'])
     psm_trace = go.Bar(x=psm_values['mzvalues'], y=psm_values['intensity'], 
-        marker_color=psm_color, width=1, opacity=1.0, name="PSM Value")
+        marker_color=psm_color, width=1, opacity=1.0, name="PSM Value", hovertemplate='MZ: %{x:.3f} Intensity: %{y:.2f}<extra></extra>')
     fig.add_trace(psm_trace)
-
+    fig.update_annotations(dict(
+            xref="x",
+            yref="y",
+            textangle=-50,
+            showarrow=False,
+            ax=0,
+            ay=0
+))
+    
     if this.plotly_touched:
         #return plotly.io.to_html(fig, full_html=False, include_plotlyjs=False, config={'displayModeBar': False})
         return plotly.io.to_html(fig, full_html=False, include_plotlyjs=False)
@@ -543,6 +556,23 @@ def _write_psm_details(psm):
 
 
 def _filter_ion_runs_fail(matches, br, yr):
+    # region
+    """
+    Filter for consecutive ions present. Filter is b-ion OR y-ion
+
+    Parameters
+    ----------
+    - matches: list of matched ion peaks
+    - br: int number of b ion consecutive matches
+    - yr: int number of y ion consecutive matches
+
+    Returns
+    -------
+    - True: if matches fail to meet br or yr
+    - False: if matches do meet br or yr
+
+    """
+    # endregion
     b_run = filter(lambda p: p >= br, matches['b']['ion_run'])
     y_run = filter(lambda p: p >= yr, matches['y']['ion_run'])
     ret_value = True
@@ -556,7 +586,7 @@ def _filter_ion_runs_fail(matches, br, yr):
 
 
 def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-H2O', 'y-NH3', 'M'), 
-                epsilon=0.5, maxcharge=1, b_run=3, y_run=3):
+                epsilon=0.5, maxcharge=1, b_run=3, y_run=3, a_test=False):
     # region
     """
     Scores PSMs found on mzsqlite db by comparing observed mz peaks against 
@@ -579,6 +609,11 @@ def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-
     """
     # endregion
         
+    if a_test:
+        with open('test.txt', 'w') as t:
+            t.write('success')
+        sys.exit(0)
+
     tabular_results = TabularResults({'tolerance': epsilon})
     #Read sequence file for target sequences
     target_sequences = []
