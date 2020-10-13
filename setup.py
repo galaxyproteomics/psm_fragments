@@ -1,6 +1,6 @@
 import setuptools
 
-_pkg_version = "1.0.1"
+_pkg_version = "1.0.2"
 _author = "Thomas McGowan"
 _author_email = "mcgo0092@umn.edu"
 _license = "MIT"

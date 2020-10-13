@@ -610,7 +610,7 @@ def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-
     # endregion
         
     if a_test:
-        with open('test.txt', 'w') as t:
+        with open('results.csv', 'w') as t:
             t.write('success')
         sys.exit(0)
 
