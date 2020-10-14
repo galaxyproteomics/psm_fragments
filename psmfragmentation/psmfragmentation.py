@@ -610,8 +610,10 @@ def score_psms(db_path, sequence_file, ion_types=('b', 'b-H2O', 'b-NH3','y', 'y-
     # endregion
         
     if a_test:
+        with open('index.html', 'w') as f:
+            f.write('<p>Test was a success</p>')
         with open('results.csv', 'w') as t:
-            t.write('success')
+            t.write('test was a success')
         sys.exit(0)
 
     tabular_results = TabularResults({'tolerance': epsilon})
