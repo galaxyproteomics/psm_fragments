@@ -159,13 +159,13 @@ class TabularResults(object):
         self._fragment_percent()
         self._unmatched_peaks()
         r_keys = ('peptideSequence','spectrumID', 'spectrumTitle', 'scanFile','PSPSMScore', 'PSPSMConfidence','TIC','max_b_run','max_y_run','pct_b_peaks_matched', 'pct_y_peaks_matched','num_peaks_unmatched_10pct')
-        with open('results.csv', 'w') as f:
-            f.write(f"sequence,spectrumID,spectrumTitle,scanFile,PSScore,PSConfidence,TIC,Max_B_Run, Max_Y_Run,PCT_B_Matched, PCT_Y_Matched,Num_10Pct_Peaks_Unmatched")
+        with open('results.tab', 'w') as f:
+            f.write(f"sequence\tspectrumID\tspectrumTitle\tscanFile\tPSScore\tPSConfidence\tTIC\tMax_B_Run\tMax_Y_Run\tPCT_B_Matched\t PCT_Y_Matched\tNum_10Pct_Peaks_Unmatched")
             f.write(os.linesep)
             for _, entry in self._results.items():
                 line = ''
                 for k in r_keys:
-                    line += f"{entry[k]},"
+                    line += f"{entry[k]}\t"
                 line = line[:-1]
                 f.write(line)
                 f.write(os.linesep)
